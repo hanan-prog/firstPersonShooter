@@ -1,3 +1,4 @@
+
 #include "glad/glad.h" //Include order can matter here
 #if defined(__APPLE__) || defined(__linux__)
 #include <SDL3/SDL.h>
@@ -16,11 +17,12 @@
 #include "glm/gtc/matrix_transform.hpp"
 #include "glm/gtc/type_ptr.hpp"
 
-#include "models.h"
+// #include "models.h"
+#include "game_map.h"
+#include "game_types.h"
 #include "shader.h"
 
 #define STB_IMAGE_IMPLEMENTATION // only place once in one .cpp file
-#include "camera.h"
 #include "stb_image.h"
 
 using namespace std;
@@ -28,18 +30,41 @@ using namespace std;
 int screenWidth = 800;
 int screenHeight = 600;
 
+bool save_output = true;
 bool DEBUG_ON = false;
 
 bool fullscreen = false;
 
-float delta_time = 0.0f, last = 0.0f, current = 0.0f;
-float speed = 0.1f;
+float current_time = 0.0f;
+float last_time = 0.0f;
+float delta_time = 0.0f;
 
-glm::vec3 pos = glm::vec3(0.0f, 0.f, 4.f);
-glm::vec3 fwd_dir = glm::vec3(0.f, 0.f, -1.f);
-glm::vec3 up = glm::vec3(0.f, 1.f, 0.f);
-// Camera camera;
+void Win2PPM(int width, int height);
 
+camera_t init_camera(glm::vec3 start_pos, glm::vec3 fwd_dir) {
+  camera_t cam;
+  cam.aspect_ratio = screenWidth / (float)screenHeight;
+  cam.fov = glm::radians(45.0f);
+  cam.near = 0.01f;
+  cam.far = 10.0f;
+
+  cam.pos = start_pos;
+  // cam.pos.y += 1.0f; // raise camera height
+  cam.fwd_dir = fwd_dir; // forward direction
+  cam.up = glm::vec3(0, 1, 0);
+  return cam;
+}
+void turn_camera(camera_t &cam, float angle) {
+  glm::mat4 rotation =
+      glm::rotate(glm::mat4(1.0f), angle, glm::vec3(0.0f, 1.0f, 0.0f));
+  cam.fwd_dir = glm::vec3(rotation * glm::vec4(cam.fwd_dir, 0.0f));
+}
+
+glm::vec3 get_camera_pos(camera_t &cam, float dis) {
+  glm::vec3 forward = cam.fwd_dir;
+  glm::mat4 translation = glm::translate(glm::mat4(1.0f), forward * dis);
+  return glm::vec3(translation * glm::vec4(cam.pos, 1.0f));
+}
 // utility funciton to load a texture from a file
 // both load_texture() and load_cubemap() were adapted from:
 // https://github.com/JoeyDeVries/LearnOpenGL/blob/master/src/4.advanced_opengl/6.1.cubemaps_skybox/cubemaps_skybox.cpp
@@ -115,37 +140,32 @@ GLuint load_cubemap(vector<string> faces_fnames) {
   return texID;
 }
 
-void drawGeometry(Shader shader, model_t *model1, model_t *model2, GLuint texID,
-                  float delta_time) {
+void drawGeometry(Shader shader, model_t *model1, model_t *model2,
+                  GLuint texID) {
   int shaderProg = shader.getShader();
 
   // modify model matrix based on some user input
   glm::mat4 model = glm::mat4(1.0f);
-  model = glm::translate(model, glm::vec3(-1.0f, 1.0f, .0f));
   shader.setUniformMat("model", model);
 
   // draw first model
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_CUBE_MAP, texID);
   glDrawArrays(GL_TRIANGLES, model1->start, model1->num_vertices);
-
-  model = glm::mat4(1.0f);
-  model = glm::translate(model, glm::vec3(-1.0f, -2.0f, .0f));
-   shader.setUniformMat("model", model);
   // draw second model
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_CUBE_MAP, texID);
   glDrawArrays(GL_TRIANGLES, model2->start, model2->num_vertices);
 }
 
-void drawEnviornmentMap(Shader shader, model_t *skyboxModel,
-                        GLuint cubemapTex) {
+void drawEnviornmentMap(Shader shader, int skyboxModelStart,
+                        int skyboxModelNumVerts, GLuint cubemapTex) {
   int shaderProg = shader.getShader();
 
   // draw skybox
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTex);
-  glDrawArrays(GL_TRIANGLES, skyboxModel->start, skyboxModel->num_vertices);
+  glDrawArrays(GL_TRIANGLES, skyboxModelStart, skyboxModelNumVerts);
 }
 
 int main(int argc, char *argv[]) {
@@ -189,98 +209,61 @@ int main(int argc, char *argv[]) {
   printf("Renderer: %s\n", glGetString(GL_RENDERER));
   printf("Version:  %s\n\n", glGetString(GL_VERSION));
 
-  Models *modelManager = new Models();
-  modelManager->load_model("models/skybox.txt", 3);
-  modelManager->load_model("models/cube.txt", 8);
-  modelManager->load_model("models/plane.txt", 5);
-  modelManager->load_model("models/sphere.txt", 8);
-  model_list_t *models = modelManager->get_models();
-
-  model_t *skyboxModel = models->root;
-  model_t *cubeModel = skyboxModel->next_model;
-  model_t *groundModel = cubeModel->next_model;
-  model_t *sphereModel = groundModel->next_model;
-
-  /// load shaders
+  //   /// load shaders
   Shader skyboxShader("shaders/skybox.vs", "shaders/skybox.fs");
   Shader shader("shaders/vertex.vs", "shaders/fragment.fs");
-  Shader hudShader("shaders/screen.vs", "shaders/screen.fs");
 
-  // load textures
-    GLuint cubeTexture = load_texture("textures/wood.bmp");
-    GLuint floorTexture = load_texture("textures/grass.png");
-
-    printf("Cube texture ID: %d\n", cubeTexture);
-    printf("Ground texture ID: %d\n", floorTexture);
-
-  // load skybox texture
+  //   load skybox texture
   vector<string> faces_fnames{
       "textures/skybox/right.jpg", "textures/skybox/left.jpg",
       "textures/skybox/top.jpg",   "textures/skybox/bottom.jpg",
       "textures/skybox/front.jpg", "textures/skybox/back.jpg"};
 
-    // vector<string> faces_fnames{
-    // "textures/intersteller/right.tga", "textures/intersteller/left.tga",
-    // "textures/intersteller/top.tga",   "textures/intersteller/down.tga",
-    // "textures/intersteller/front.tga", "textures/intersteller/back.tga"};
+  //   vector<string> faces_fnames{
+  //       "textures/intersteller/right.tga", "textures/intersteller/left.tga",
+  //       "textures/intersteller/top.tga",   "textures/intersteller/down.tga",
+  //       "textures/intersteller/front.tga", "textures/intersteller/back.tga"};
 
   GLuint cubemapTexture = load_cubemap(faces_fnames);
   printf("Cubemap texture ID: %d\n", cubemapTexture);
 
-  // covers screen in NDC
-  float screenVerts[] = {-1.0f, 1.0f, 0.0f, 1.0f,  -1.0f, -1.0f,
-                         0.0f,  0.0f, 1.0f, -1.0f, 1.0f,  0.0f,
+  // load game map
+  GameMap *game_map = new GameMap("scenes/map1.txt");
+  float *modelData = game_map->get_model_data();
+  int total_verts = game_map->get_total_vertices();
 
-                         -1.0f, 1.0f, 0.0f, 1.0f,  1.0f,  -1.0f,
-                         1.0f,  0.0f, 1.0f, 1.0f,  1.0f,  1.0f};
+  GLuint vao;
+  glGenVertexArrays(1, &vao); // Create a VAO
+  glBindVertexArray(vao); // Bind the above created VAO to the current context
+  GLuint vbo[1];
+  glGenBuffers(1, vbo); // Create 1 buffer called vbo
+  glBindBuffer(GL_ARRAY_BUFFER,
+               vbo[0]); // Set the vbo as the active array buffer (Only one
+                        // buffer can be active at a time)
+  glBufferData(GL_ARRAY_BUFFER, total_verts * 8 * sizeof(float), modelData,
+               GL_STATIC_DRAW); // upload vertices to vbo
 
-  GLuint screenVAO, screenVBO;
-  glGenVertexArrays(1, &screenVAO);
-  glBindVertexArray(screenVAO);
-  glGenBuffers(1, &screenVBO);
-  glBindBuffer(GL_ARRAY_BUFFER, screenVBO);
-  glBufferData(GL_ARRAY_BUFFER, sizeof(screenVerts), &screenVerts,
-               GL_STATIC_DRAW);
-  // position attribute
-  glEnableVertexAttribArray(0);
-  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
-  // texcoord attribute
-  glEnableVertexAttribArray(1);
-  glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
-                        (void *)(2 * sizeof(float)));
-  glBindVertexArray(0);
-
-  // cube and floor share shader and attributes
-  float *groundData = groundModel->data;
-  int groundVerts = groundModel->num_vertices;
-
-  GLuint vao, vbo;
-  glGenVertexArrays(1, &vao);
-  glBindVertexArray(vao);
-  glGenBuffers(1, &vbo);
-  glBindBuffer(GL_ARRAY_BUFFER, vbo);
-  glBufferData(GL_ARRAY_BUFFER, groundVerts * 5 * sizeof(float), groundData,
-               GL_STATIC_DRAW);
-  shader.initShaderAttribs5Verts();
-  glBindVertexArray(0);
-
-  // sphere and cube
-  float *modelData =
-      modelManager->combined_model_data(cubeModel, sphereModel, 8);
-  int modelVerts = cubeModel->num_vertices + sphereModel->num_vertices;
-
-  GLuint modelVAO, modelVBO;
-  glGenVertexArrays(1, &modelVAO);
-  glBindVertexArray(modelVAO);
-  glGenBuffers(1, &modelVBO);
-  glBindBuffer(GL_ARRAY_BUFFER, modelVBO);
-  glBufferData(GL_ARRAY_BUFFER, modelVerts * 8 * sizeof(float), modelData,
-               GL_STATIC_DRAW);
   shader.initShaderAttribs8Verts();
   glBindVertexArray(0);
 
-  float *skyData = skyboxModel->data;
-  int skyVerts = skyboxModel->num_vertices;
+  // load skybox model
+  const char *fname = "models/skybox.txt";
+  ifstream modelFile;
+  modelFile.open(fname);
+  if (!modelFile.is_open()) {
+    // problem opening
+    printf("can't open file\n");
+    return 1;
+  }
+
+  int num_lines = 0;
+  modelFile >> num_lines;
+  float *skyData = new float[num_lines];
+  for (int i = 0; i < num_lines; i++) {
+    modelFile >> skyData[i];
+  }
+
+  int skyVerts = num_lines / 3;
 
   GLuint skyboxVAO, skyboxVBO;
   glGenVertexArrays(1, &skyboxVAO);
@@ -292,54 +275,34 @@ int main(int argc, char *argv[]) {
   skyboxShader.initShaderAttribs3Verts();
   glBindVertexArray(0);
 
-  // initialize shader
-  shader.useShader();
-  shader.setTexNum("tex0", 0);
+  // initialize camera
+  camera_t global_cam =
+      init_camera(game_map->get_start_pos(), glm::vec3(0, 0, -1));
+  printf("initial camera position %.2f %.2f %.2f\n", global_cam.pos.x,
+         global_cam.pos.y, global_cam.pos.z);
 
-  skyboxShader.useShader();
-  skyboxShader.setTexNum("skybox", 0);
-
-  /// frame buffer config
-  hudShader.useShader();
-  hudShader.setTexNum("hudTexure", 0);
-
-//   GLuint framebuffer;
-//   glGenFramebuffers(1, &framebuffer);
-//   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-
-//   GLuint colorBuffer;
-//   glGenTextures(1, &colorBuffer);
-//   glBindTexture(GL_TEXTURE_2D, colorBuffer);
-//   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, screenWidth, screenHeight, 0, GL_RGB,
-//                GL_UNSIGNED_BYTE, NULL);
-//   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-//   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-//   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
-//                          colorBuffer, 0);
-
-//   GLuint rbo;
-//   glGenRenderbuffers(1, &rbo);
-//   glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-//   glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, screenWidth,
-//                         screenHeight);
-//   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
-//                             GL_RENDERBUFFER, rbo);
-
-//   if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
-//     printf("ERROR::FRAMEBUFFER:: Framebuffer is not complete!\n");
-//   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-  // Load the new shader
+         // get skybox view and projection locations
+    GLint skyboxViewLoc =
+        glGetUniformLocation(skyboxShader.getShader(), "view");
+    GLint skyboxProjLoc =
+        glGetUniformLocation(skyboxShader.getShader(), "proj");
 
   glEnable(GL_DEPTH_TEST);
 
   bool quit = false;
+  bool pick_up = false;
+
+  float move, turn_angle, speed = 0.03f;
+
   SDL_Event event;
   while (!quit) {
 
+    move = 0.0f;
+    turn_angle = 0.0f;
+
     while (SDL_PollEvent(&event)) {
       // handle user input
-      delta_time = SDL_GetTicks() / 1000.0f;
+
       if (event.type == SDL_EVENT_QUIT) {
         quit = true;
       }
@@ -353,179 +316,195 @@ int main(int argc, char *argv[]) {
           fullscreen = !fullscreen;
           SDL_SetWindowFullscreen(window,
                                   fullscreen ? SDL_WINDOW_FULLSCREEN : 0);
-          SDL_GetWindowSize(window, &screenWidth, &screenHeight);
-
-          glViewport(0, 0, screenWidth, screenHeight);
         }
       }
 
       if (event.type == SDL_EVENT_KEY_DOWN) {
-        float velocity = PLAYER_SPEED * delta_time;
-        if (event.key.key == SDLK_W) {
-          pos += fwd_dir * velocity;
+        if (event.key.key == SDLK_UP) {
+          // move forward
+          // global_cam.moveZ += cam_move_speed;
+          // printf("forward works move\n");
+
+          move = 1.f;
         }
 
-        if (event.key.key == SDLK_S) {
-          pos -= fwd_dir * velocity;
+        if (event.key.key == SDLK_DOWN) {
+          // backwards
+
+          move = -1.f;
         }
 
-        if (event.key.key == SDLK_A) {
+        if (event.key.key == SDLK_LEFT) {
+          // left
 
-          pos -= glm::normalize(glm::cross(fwd_dir, up)) * velocity;
+          turn_angle = speed;
         }
 
-        if (event.key.key == SDLK_D) {
-          pos += glm::normalize(glm::cross(fwd_dir, up)) * velocity;
+        if (event.key.key == SDLK_RIGHT) {
+          // right
+          turn_angle = -speed;
         }
       }
-
-      //   if (event.type == SDL_EVENT_KEY_DOWN) {
-      //     float velocity = PLAYER_SPEED * delta_time;
-      //     if (event.key.key == SDLK_W) {
-      //         camera.pos += camera.front * velocity;
-      //     }
-
-      //     if (event.key.key == SDLK_S) {
-      //         camera.pos -= camera.front * velocity;
-      //     }
-
-      //     if (event.key.key == SDLK_A) {
-      //         camera.pos -= camera.getCameraRight() * velocity;
-      //     }
-
-      //     if (event.key.key == SDLK_D) {
-      //         camera.pos += camera.getCameraRight() * velocity;
-      //     }
-
-      //   }
-
-      //   if (event.type == SDL_EVENT_MOUSE_MOTION) {
-      //         // Grab the specific motionEvent from the general SDL_Event
-      //         structure SDL_MouseMotionEvent motionEvent = event.motion;
-      //         camera.updateCameraRotation(motionEvent.xrel,
-      //         motionEvent.yrel);
-      //     }
     }
 
-    // render
-    // glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-    // glEnable(GL_DEPTH_TEST); // disabled for screen quad
+    if (turn_angle) {
+      turn_camera(global_cam, turn_angle);
+    }
+
+    if (move) {
+      glm::vec3 new_pos = get_camera_pos(global_cam, move * speed);
+
+      // add offset to avoid collison
+      glm::vec3 offset_pos = get_camera_pos(global_cam, move * (speed + 0.06f));
+      if (game_map->process_move(offset_pos) == VALID) {
+
+        global_cam.pos = new_pos;
+        printf("moving to new position %.2f %.2f %.2f\n", global_cam.pos.x,
+               global_cam.pos.y, new_pos.z);
+      } else if (game_map->process_move(offset_pos) == WON) {
+        printf("You reached the goal! You won!\n");
+        quit = true;
+      } else {
+        printf("move invalid due to collision\n");
+      }
+    }
+
+    last_time = current_time;
+    current_time = SDL_GetTicks() / 1000.0f; // convert to seconds
+    delta_time = current_time - last_time;
 
     glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     shader.useShader();
-
-
-
-    glm::mat4 view = glm::lookAt(pos, pos + fwd_dir, up);
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f),
-                                      (float)screenWidth /
-                                      (float)screenHeight, 0.1f, 100.0f);
-
-        shader.setUniformMat("view", view);
-    shader.setUniformMat("proj", proj);
-    // glm::vec3 overheadPos = pos + glm::vec3(0.0f, 20.0f, 0.0f);
-    // glm::mat4 orthoView =
-    //     glm::lookAt(overheadPos, pos, glm::vec3(0.0f, 0.0f, -1.0f));
-    // shader.setUniformMat("view", orthoView);
-
-     glm::mat4 model = glm::mat4(1.0f);
-     shader.setUniformMat("model", model);
+    shader.setTexNum("skybox", 0);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
 
     glBindVertexArray(vao);
-     glActiveTexture(GL_TEXTURE0);
-  glBindTexture(GL_TEXTURE_2D, floorTexture);
-  glDrawArrays(GL_TRIANGLES, groundModel->start, groundModel->num_vertices);
-    // drawGeometry(shader, cubeModel, groundModel, cubemapTexture, delta_time);
-    glBindVertexArray(0);
+    game_map->draw(shader, global_cam, delta_time);
+   
 
-    // render other models in the scene
-    glBindVertexArray(modelVAO);
-    drawGeometry(shader, cubeModel, sphereModel, cubemapTexture, delta_time);
-    glBindVertexArray(0);
 
-    // draw main screen
-    // glBindFramebuffer(GL_FRAMEBUFFER, 0);        
-    // glViewport(0, 0, screenWidth, screenHeight);
-    // glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-    // glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // shader.useShader();
-
-    // glm::mat4 proj = glm::perspective(glm::radians(45.0f),
-    //                                   (float)screenWidth / (float)screenHeight,
-    //                                   0.1f, 100.0f);
-    // shader.setUniformMat("proj", proj);
-    // glm::mat4 view = glm::lookAt(pos, pos + fwd_dir, up);
+    // glm::mat4 view = camera.get_view_matrix();
+    // glm::mat4 proj = camera.get_projection_matrix();
     // shader.setUniformMat("view", view);
+    // shader.setUniformMat("proj", proj);
 
-    // glBindVertexArray(vao);
-    // drawGeometry(shader, cubeModel, groundModel, cubemapTexture, delta_time);
-    // glBindVertexArray(0);
-
-    // glBindVertexArray(modelVAO);
-    // drawGeometry(shader, cubeModel, sphereModel, cubemapTexture, delta_time);
-    // glBindVertexArray(0);
-
-    glDepthFunc(GL_LEQUAL);
-    skyboxShader.useShader();
-    skyboxShader.setUniformMat("view", glm::mat4(glm::mat3(view)));
-    skyboxShader.setUniformMat("proj", proj);
-    glBindVertexArray(skyboxVAO);
-    drawEnviornmentMap(skyboxShader, skyboxModel, cubemapTexture);
-    glBindVertexArray(0);
-    glDepthFunc(GL_LESS);
-
-    // glDisable(GL_DEPTH_TEST);
-    // hudShader.useShader();
-
-    // glBindVertexArray(screenVAO);
+    // glm::mat4 model = glm::mat4(1.0f);
+    // shader.setUniformMat("model", model);
+    // shader.setTexNum("texID", 0);
     // glActiveTexture(GL_TEXTURE0);
-    // glBindTexture(GL_TEXTURE_2D, colorBuffer);
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
+    // glBindTexture(GL_TEXTURE_2D, floorTexture);
+
+    // glBindVertexArray(groundVao);
+    // glDrawArrays(GL_TRIANGLES, 0, groundModel->num_vertices);
     // glBindVertexArray(0);
 
-    // glEnable(GL_DEPTH_TEST);
+    // cube
+    // model = glm::mat4(1.0f);
+    // model = glm::translate(model, glm::vec3(2.0f, 0.5f, -1.0f));
+    // model = glm::rotate(model, delta_time * glm::radians(90.0f),
+    //                     glm::vec3(0.0f, 1.0f, 1.0f));
+    // model = glm::rotate(model, delta_time * glm::radians(45.0f),
+    //                     glm::vec3(1.0f, 0.0f, 0.0f));
 
-    SDL_GL_SwapWindow(window);
+    // shader.setUniformMat("model", model);
 
-    // // draw to screen
-    // glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // glDisable(GL_DEPTH_TEST); // disabled for screen quad
-    // glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-    // glClear(GL_COLOR_BUFFER_BIT);
-    // hudShader.useShader();
-    // glBindVertexArray(screenVAO);
-    // glBindTexture(GL_TEXTURE_2D, colorBuffer);
-    // glDrawArrays(GL_TRIANGLES, 0, 6);
+    // shader.setTexNum("texID", -1);
+    // glm::vec3 cubeColor(0.7f, 0.2f, 0.3f);
+    // shader.setUniformColor("inColor", cubeColor);
+
+    // glBindVertexArray(cubeVao);
+    // glDrawArrays(GL_TRIANGLES, 0, cubeModel->num_vertices);
     // glBindVertexArray(0);
+
+    // draw sphere
+    // glBindVertexArray(sphereVao);
+    // glm::mat4 model = glm::mat4(1.0f);
+    // model = glm::translate(model, glm::vec3(0.f, 1.5f, 0.0f));
+    // shader.setUniformMat("model", model);
+    // // glm::vec3 sphereColor(0.2f, 0.3f, 0.8f);
+    // // shader.setUniformColor("inColor", sphereColor);
+    // // shader.setTexNum("texID", -1);
+    // glActiveTexture(GL_TEXTURE0);
+    // glBindTexture(GL_TEXTURE_CUBE_MAP, cubemapTexture);
+    // glDrawArrays(GL_TRIANGLES, 0, sphereModel->num_vertices);
+    glBindVertexArray(0);
 
     // draw skybox as last
-    // glDepthFunc(GL_LEQUAL); // change depth function so depth test passes
-    // // when values are equal to depth buffer's content
-    // skyboxShader.useShader();
-    // // remove translation from the view matrix
+    glDepthFunc(GL_LEQUAL);
 
-    // // so that if the player moves, the skybox still looks all encompssing
-    // skyboxShader.setUniformMat("view", glm::mat4(glm::mat3(view)));
-    // skyboxShader.setUniformMat("proj", proj);
+    skyboxShader.useShader();
+    skyboxShader.setTexNum("skybox", 0);
 
-    // glBindVertexArray(skyboxVAO);
-    // drawEnviornmentMap(skyboxShader, skyboxModel, cubemapTexture);
-    // glBindVertexArray(0);
-    // glDepthFunc(GL_LESS); // set depth function back to default
+    glm::mat4 view = glm::lookAt(global_cam.pos, global_cam.pos + global_cam.fwd_dir, global_cam.up);
+    glm::mat4 proj = glm::perspective(global_cam.fov, global_cam.aspect_ratio, global_cam.near, global_cam.far);
 
-    // SDL_GL_SwapWindow(window); // Double buffering
+    // so that if the player moves, the skybox still looks all encompssing
+    skyboxShader.setUniformMat("view", glm::mat4(glm::mat3(view)));
+    skyboxShader.setUniformMat("proj", proj);
+
+    glBindVertexArray(skyboxVAO);
+    drawEnviornmentMap(skyboxShader, 0, skyVerts, cubemapTexture);
+    glBindVertexArray(0);
+    glDepthFunc(GL_LESS); // set depth function back to default
+
+    if (save_output) {
+      Win2PPM(screenWidth, screenHeight);
+      // save_output = false;
+    }
+
+    SDL_GL_SwapWindow(window); // Double buffering
   }
 
   // clean up
   shader.cleanUpShader();
   skyboxShader.cleanUpShader();
-
-  glDeleteVertexArrays(1, &vao);
+//   glDeleteVertexArrays(1, &cubeVao);
+//   glDeleteVertexArrays(1, &groundVao);
+//   glDeleteVertexArrays(1, &skyboxVAO);
   SDL_GL_DestroyContext(context);
   SDL_Quit();
 
   return 0;
+}
+
+void Win2PPM(int width, int height) {
+  char outdir[10] = "out/"; // Must be defined!
+  int i, j;
+  FILE *fptr;
+  static int counter = 0;
+  char fname[32];
+  unsigned char *image;
+
+  /* Allocate our buffer for the image */
+  image = (unsigned char *)malloc(3 * width * height * sizeof(char));
+  if (image == NULL) {
+    fprintf(stderr, "ERROR: Failed to allocate memory for image\n");
+  }
+
+  /* Open the file */
+  snprintf(fname, sizeof(fname), "%simage_%04d.ppm", outdir, counter);
+  if ((fptr = fopen(fname, "w")) == NULL) {
+    fprintf(stderr, "ERROR: Failed to open file for window capture\n");
+  }
+
+  /* Copy the image into our buffer */
+  glReadBuffer(GL_BACK);
+  glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, image);
+
+  /* Write the PPM file */
+  fprintf(fptr, "P6\n%d %d\n255\n", width, height);
+  for (j = height - 1; j >= 0; j--) {
+    for (i = 0; i < width; i++) {
+      fputc(image[3 * j * width + 3 * i + 0], fptr);
+      fputc(image[3 * j * width + 3 * i + 1], fptr);
+      fputc(image[3 * j * width + 3 * i + 2], fptr);
+    }
+  }
+
+  free(image);
+  fclose(fptr);
+  counter++;
 }

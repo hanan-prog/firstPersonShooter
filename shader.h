@@ -23,6 +23,11 @@ public:
 
   void cleanUpShader();
 
+  void setUniformColor(const std::string &name, glm::vec3 &color) const {
+    glUniform3fv(glGetUniformLocation(shaderProgram_, name.c_str()), 1,
+                 &color[0]);
+  }
+
   void setTexNum(const std::string &name, int value) const {
     glUniform1i(glGetUniformLocation(shaderProgram_, name.c_str()), value);
   }

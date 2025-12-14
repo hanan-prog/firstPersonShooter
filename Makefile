@@ -10,7 +10,7 @@ TARGET := shooter
 
 # C++ sources
 SRCS_CPP := main.cpp
-SRCS_CC  := shader.cc 
+SRCS_CC  := shader.cc entity.cc game_map.cc
 
 # C sources
 SRCS_C   := glad/glad.c
