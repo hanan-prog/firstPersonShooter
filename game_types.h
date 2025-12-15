@@ -5,7 +5,12 @@
 #include "glm/glm.hpp"
 #include <vector>
 
-
+typedef enum  {
+    FORWARD,
+    BACKWARD,
+    LEFT,
+    RIGHT
+}movement_t;
 // node
 typedef struct model_t {
     const char* name;
@@ -32,9 +37,8 @@ typedef struct transform_t {
 
 typedef struct camera_t {
     // left to right and up and down angles
-    float angleX, angleY;
-    float moveX, moveZ; // 
-    glm::vec3 pos, fwd_dir, up; // camera position, direction, right vectors
+    float pitch, yaw;
+    glm::vec3 pos, fwd_dir, up, right; // camera position, direction, right vectors
     glm::mat4 transformation; 
     float fov, aspect_ratio, near, far;
 } camera_t;

@@ -5,7 +5,7 @@
 #include <fstream>
 using namespace std;
 
-GameMap::GameMap(const char* fname) {
+void GameMap::init_map(const char* fname) {
     std::ifstream mapFile;
     mapFile.open(fname);
     if (!mapFile.is_open()) {
@@ -64,7 +64,7 @@ GameMap::GameMap(const char* fname) {
                 goal_transform.scale = glm::vec3(1.0f, 1.0f, 1.0f);
                 goal_transform.rotation = glm::vec3(0.0f, 1.0f, 0.0f);
                 goal_transform.angle = 0.0f;
-                entities[idx].init_goal(goal_transform, teapot);
+                entities[idx].init_goal(goal_transform, sphere);
             } 
             
             // else if(ch >= 97 && ch <= 101) { 
@@ -90,6 +90,14 @@ GameMap::GameMap(const char* fname) {
     }
     key_held = Entity(); // initialize to none
     mapFile.close();
+}
+
+void GameMap::set_cube_map_texture(vector<string> faces_fnames) {
+    cubeMapTexID_ = load_cubemap(faces_fnames);
+}
+
+GLuint GameMap::get_cube_map_texture() {
+    return cubeMapTexID_;
 }
 
 
@@ -121,6 +129,7 @@ void GameMap::draw(Shader shaderProgram, camera_t& cam, float delta_time) {
     // cam.pos = glm::vec3(0, 1, 3);
     // cam.fwd_dir = glm::vec3(0, 0, -1);
     floor.draw(shaderProgram, cam);
+    // draw_floor(shaderProgram, floorVao_, floorTex_);
     for (int i = 0; i < h; i++) {
         for (int j = 0; j < w; j++) {
             int idx = i * w + j;

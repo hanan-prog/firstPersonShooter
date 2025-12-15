@@ -27,5 +27,4 @@ Color = inColor;
    vec4 norm4 = transpose(inverse(view*model)) * vec4(inNormal,0.0);
    vertNormal = normalize(norm4.xyz);
    texcoord = inTexcoord;
-
 }

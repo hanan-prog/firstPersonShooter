@@ -8,7 +8,7 @@ uniform mat4 proj;
 
 
 void main() {
-    texcoord = position;
+    texcoord = vec3(position.xy, -position.z);
     vec4 pos = proj * view * vec4(position, 1.0);
     gl_Position = pos.xyww;
 }

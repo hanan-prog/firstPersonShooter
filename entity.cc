@@ -40,10 +40,12 @@ void Entity::init_goal(transform_t transform, model_t* geometry) {
     // initialize goal entity
     transform_ = transform;
     material_ = color_picker('g');
-    // textID_ = -1; // no texture for goal
+    textID_ = -1; // no texture for goal
     geometry_ = geometry;
     type_ = GOAL;
 }
+
+
 
 void Entity::draw(Shader shaderProgram, camera_t& cam) {
     // up
@@ -52,27 +54,18 @@ void Entity::draw(Shader shaderProgram, camera_t& cam) {
         return;
     }
 
-    // printf("drawing geometry %s\n", geometry_->name);
-    // glm::mat4 model = glm::mat4(1.0f);
+    
 
-
-    // GLint uniModel = glGetUniformLocation(shaderProgram, "model");
-    // GLint uniTexID = glGetUniformLocation(shaderProgram, "texID");
-    // GLint uniView = glGetUniformLocation(shaderProgram, "view");
-    // GLint uniProj = glGetUniformLocation(shaderProgram, "proj");
-    // GLint64 uniColor = glGetUniformLocation(shaderProgram, "inColor");
-    // glUniform3fv(uniColor, 1, glm::value_ptr(material_)); //pass color to shader
 
     glm::mat4 model = get_model_matrix();
     glm::mat4 view = get_view_matrix(cam);
     glm::mat4 proj = get_proj_matrix(cam);
+    shaderProgram.setUniformColor("inColor", material_);
     shaderProgram.setUniformMat("model", model);
     shaderProgram.setUniformMat("view", view);
     shaderProgram.setUniformMat("proj", proj);
-    // glUniformMatrix4fv(uniModel, 1, GL_FALSE, glm::value_ptr(model)); //pass model matrix to shader
-    // glUniformMatrix4fv(uniView, 1, GL_FALSE, glm::value_ptr(view)); //pass view matrix to shader
-    // glUniformMatrix4fv(uniProj, 1, GL_FALSE, glm::value_ptr(proj)); //pass projection matrix to shader
-    // glUniform1i(uniTexID, textID_);
+
+    shaderProgram.setTexNum("texID", textID_);
     glDrawArrays(GL_TRIANGLES, geometry_->start, geometry_->num_vertices);
 }
 
@@ -94,12 +87,6 @@ entity_types_t Entity::get_type() {
     return type_;
 }
 
-// char Entity::get_key_id() {
-//     return key_id_;
-// }
-// void Entity::set_key_id(char key_id) {
-//     key_id_ = key_id;
-// }
 
 void Entity::set_type(entity_types_t type) {
     type_ = type;
